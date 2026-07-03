@@ -864,9 +864,16 @@ build_dsdt(GArray *table_data, BIOSLinker *linker, VirtMachineState *vms)
     if (vmc->acpi_expose_flash) {
         acpi_dsdt_add_flash(scope, &memmap[VIRT_FLASH]);
     }
-    acpi_dsdt_add_fw_cfg(scope, &memmap[VIRT_FW_CFG]);
-    acpi_dsdt_add_virtio(scope, &memmap[VIRT_MMIO],
-                    (irqmap[VIRT_MMIO] + ARM_SPI_BASE), NUM_VIRTIO_TRANSPORTS);
+    /* On AArch64 Windows 11 guests, fw_cfg and virtio-mmio transports
+     * appear as driverless ACPI devices (QEMU0002 / LNRO0005) with
+     * ProblemCode 28. Only expose them for AArch32 guests where they
+     * may actually be needed.
+     */
+    if (!object_property_get_bool(OBJECT(first_cpu), "aarch64", NULL)) {
+        acpi_dsdt_add_fw_cfg(scope, &memmap[VIRT_FW_CFG]);
+        acpi_dsdt_add_virtio(scope, &memmap[VIRT_MMIO],
+                        (irqmap[VIRT_MMIO] + ARM_SPI_BASE), NUM_VIRTIO_TRANSPORTS);
+    }
     acpi_dsdt_add_pci(scope, memmap, irqmap[VIRT_PCIE] + ARM_SPI_BASE, vms);
     if (vms->acpi_dev) {
         build_ged_aml(scope, "\\_SB."GED_DEVICE,
