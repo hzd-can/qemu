@@ -1346,22 +1346,39 @@ static int qxl_add_memslot(PCIQXLDevice *d, uint32_t slot_id, uint64_t delta,
         break;
     }
     if (i == ARRAY_SIZE(regions)) {
-        qxl_set_guest_bug(d, "%s: finished loop without match", __func__);
-        return 1;
-    }
+        /* Try Guest RAM for self-allocated VRAM (ARM64 cache coherency) */
+        hwaddr ram_region_offset = 0;
+        hwaddr ram_region_length = guest_end - guest_start;
 
-    switch (pci_region) {
-    case QXL_RAM_RANGE_INDEX:
-        mr = &d->vga.vram;
-        break;
-    case QXL_VRAM_RANGE_INDEX:
-    case 4 /* vram 64bit */:
-        mr = &d->vram_bar;
-        break;
-    default:
-        /* should not happen */
-        qxl_set_guest_bug(d, "%s: pci_region = %d", __func__, pci_region);
-        return 1;
+        mr = address_space_translate(&address_space_memory,
+                                     guest_start,
+                                     &ram_region_offset,
+                                     &ram_region_length,
+                                     false,
+                                     MEMTXATTRS_UNSPECIFIED);
+
+        if (!mr || ram_region_length < (guest_end - guest_start) ||
+            !memory_region_is_ram(mr)) {
+            qxl_set_guest_bug(d, "%s: finished loop without match", __func__);
+            return 1;
+        }
+
+        pci_start = guest_start - ram_region_offset;
+        pci_region = -1; /* Not a PCI region */
+    } else {
+        switch (pci_region) {
+        case QXL_RAM_RANGE_INDEX:
+            mr = &d->vga.vram;
+            break;
+        case QXL_VRAM_RANGE_INDEX:
+        case 4 /* vram 64bit */:
+            mr = &d->vram_bar;
+            break;
+        default:
+            /* should not happen */
+            qxl_set_guest_bug(d, "%s: pci_region = %d", __func__, pci_region);
+            return 1;
+        }
     }
     assert(guest_end - pci_start <= memory_region_size(mr));
 
