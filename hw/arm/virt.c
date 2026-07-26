@@ -2288,6 +2288,21 @@ static void machvirt_init(MachineState *machine)
     create_rtc(vms);
 
     create_pcie(vms);
+    /* 强制添加 QXL VGA 作为默认图形设备 */
+    if (vms->bus) {  /* vms->bus 是 PCI 总线，在 create_pcie 中创建 */
+      PCIDevice *qxl_dev;
+        
+        /* 先创建设备，不实例化 */
+        qxl_dev = pci_new(-1, "qxl-vga");
+        
+        /* 在实例化之前设置属性 */
+        qdev_prop_set_uint64(DEVICE(qxl_dev), "vram_size", 16 * 1024 * 1024);
+        qdev_prop_set_uint32(DEVICE(qxl_dev), "ram_size", 16 * 1024 * 1024);
+        qdev_prop_set_uint32(DEVICE(qxl_dev), "vgamem_mb", 16);
+
+        /* 最后手动实例化设备 */
+        pci_realize_and_unref(qxl_dev, vms->bus, &error_fatal);
+    }
 
     if (has_ged && aarch64 && firmware_loaded && virt_is_acpi_enabled(vms)) {
         vms->acpi_dev = create_acpi_ged(vms);
