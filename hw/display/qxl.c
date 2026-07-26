@@ -32,6 +32,8 @@
 #include "sysemu/runstate.h"
 #include "migration/vmstate.h"
 #include "trace.h"
+#include "qom/object.h"
+#include "hw/core/cpu.h"
 
 #include "qxl.h"
 
@@ -2163,9 +2165,11 @@ static void qxl_realize_common(PCIQXLDevice *qxl, Error **errp)
     }
     memory_region_set_flush_coalesced(&qxl->io_bar);
 
-
-    pci_register_bar(&qxl->pci, QXL_IO_RANGE_INDEX,
-                     PCI_BASE_ADDRESS_SPACE_IO, &qxl->io_bar);
+    /*
+     * ARM/ARM64 have no independent PCI I/O address space.
+     * Expose QXL I/O registers as a memory-mapped BAR so that
+     * the guest driver can access them with normal load/store.
+     */
 
     pci_register_bar(&qxl->pci, QXL_ROM_RANGE_INDEX,
                      PCI_BASE_ADDRESS_SPACE_MEMORY, &qxl->rom_bar);
@@ -2175,6 +2179,16 @@ static void qxl_realize_common(PCIQXLDevice *qxl, Error **errp)
 
     pci_register_bar(&qxl->pci, QXL_VRAM_RANGE_INDEX,
                      PCI_BASE_ADDRESS_SPACE_MEMORY, &qxl->vram32_bar);
+
+    if (first_cpu != NULL &&
+        object_property_get_bool(OBJECT(first_cpu), "aarch64", NULL)) {
+        pci_register_bar(&qxl->pci, QXL_IO_RANGE_INDEX,
+                         PCI_BASE_ADDRESS_SPACE_MEMORY, &qxl->io_bar);
+    } else {
+        pci_register_bar(&qxl->pci, QXL_IO_RANGE_INDEX,
+                         PCI_BASE_ADDRESS_SPACE_IO, &qxl->io_bar);
+    }
+
 
     if (qxl->vram32_size < qxl->vram_size) {
         /*
