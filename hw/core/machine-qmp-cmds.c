@@ -8,6 +8,8 @@
  */
 
 #include "qemu/osdep.h"
+#include "qemu/bitmap.h"
+#include "qemu/thread.h"
 #include "hw/acpi/vmgenid.h"
 #include "hw/boards.h"
 #include "hw/intc/intc.h"
@@ -388,4 +390,111 @@ GuidInfo *qmp_query_vm_generation_id(Error **errp)
     info = g_malloc0(sizeof(*info));
     info->guid = qemu_uuid_unparse_strdup(&vms->guid);
     return info;
+}
+
+void qmp_cpu_affinity(bool has_cpu_index, int64_t cpu_index,
+                      intList *cpus, Error **errp)
+{
+    CPUState *cpu;
+    intList *entry;
+    unsigned long *bitmap;
+    unsigned long nbits;
+    int64_t max_id = -1;
+    bool found = false;
+    int ret;
+
+    if (!cpus) {
+        error_setg(errp, "cpus list must not be empty");
+        return;
+    }
+
+    for (entry = cpus; entry; entry = entry->next) {
+        if (entry->value < 0 || entry->value > 65535) {
+            error_setg(errp, "invalid cpu id %" PRId64, entry->value);
+            return;
+        }
+        max_id = MAX(max_id, entry->value);
+    }
+
+    nbits = max_id + 1;
+    bitmap = bitmap_new(nbits);
+    for (entry = cpus; entry; entry = entry->next) {
+        set_bit(entry->value, bitmap);
+    }
+
+    CPU_FOREACH(cpu) {
+        if (has_cpu_index && cpu->cpu_index != cpu_index) {
+            continue;
+        }
+        if (!cpu->created || !cpu->thread) {
+            continue;
+        }
+        ret = qemu_thread_set_affinity(cpu->thread, bitmap, nbits);
+        if (ret) {
+            g_free(bitmap);
+            if (ret == -ENOSYS) {
+                error_setg(errp, "setting CPU affinity is not supported "
+                           "on this platform");
+            } else {
+                error_setg_errno(errp, ret < 0 ? -ret : ret,
+                                 "failed to set affinity for cpu %d",
+                                 cpu->cpu_index);
+            }
+            return;
+        }
+        found = true;
+    }
+    g_free(bitmap);
+
+    if (has_cpu_index && !found) {
+        error_setg(errp, "cpu %" PRId64 " not found or not created yet",
+                   cpu_index);
+    }
+}
+
+CpuAffinityInfoList *qmp_query_cpu_affinity(Error **errp)
+{
+    CpuAffinityInfoList *head = NULL, **tail = &head;
+    CPUState *cpu;
+
+    CPU_FOREACH(cpu) {
+        CpuAffinityInfo *info;
+        intList **cpu_tail;
+        unsigned long *bitmap;
+        unsigned long nbits;
+        unsigned long value;
+        int ret;
+
+        if (!cpu->created || !cpu->thread) {
+            continue;
+        }
+        ret = qemu_thread_get_affinity(cpu->thread, &bitmap, &nbits);
+        if (ret) {
+            qapi_free_CpuAffinityInfoList(head);
+            if (ret == -ENOSYS) {
+                error_setg(errp, "getting CPU affinity is not supported "
+                           "on this platform");
+            } else {
+                error_setg_errno(errp, ret < 0 ? -ret : ret,
+                                 "failed to get affinity for cpu %d",
+                                 cpu->cpu_index);
+            }
+            return NULL;
+        }
+
+        info = g_malloc0(sizeof(*info));
+        info->cpu_index = cpu->cpu_index;
+
+        cpu_tail = &info->cpus;
+        value = find_first_bit(bitmap, nbits);
+        while (value < nbits) {
+            QAPI_LIST_APPEND(cpu_tail, (int64_t)value);
+            value = find_next_bit(bitmap, nbits, value + 1);
+        }
+        g_free(bitmap);
+
+        QAPI_LIST_APPEND(tail, info);
+    }
+
+    return head;
 }
