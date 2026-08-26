@@ -645,6 +645,14 @@ static int interface_get_command(QXLInstance *sin, struct QXLCommandExt *ext)
         if (qxl->guest_bug || SPICE_RING_IS_EMPTY(ring)) {
             return false;
         }
+        /*
+         * ring 位于 guest 写入的内存里：需要用屏障保证
+         * 先读到 ring->prod（SPICE_RING_IS_EMPTY 内部）再读 item 内容，
+         * 并保证 item 拷贝完成后，cons++（SPICE_RING_POP 内部）才对
+         * guest 可见。x86 宿主机靠 TSO 掩盖了这个问题，
+         * 弱内存序宿主机（ARM）不会。
+         */
+        smp_rmb();
         SPICE_RING_CONS_ITEM(qxl, ring, cmd);
         if (!cmd) {
             return false;
@@ -652,6 +660,7 @@ static int interface_get_command(QXLInstance *sin, struct QXLCommandExt *ext)
         ext->cmd      = *cmd;
         ext->group_id = MEMSLOT_GROUP_GUEST;
         ext->flags    = qxl->cmdflags;
+        smp_mb();
         SPICE_RING_POP(ring, notify);
         qxl_ring_set_dirty(qxl);
         if (notify) {
@@ -804,6 +813,8 @@ static int interface_get_cursor_command(QXLInstance *sin, struct QXLCommandExt *
         if (SPICE_RING_IS_EMPTY(ring)) {
             return false;
         }
+        /* 屏障的必要性见 interface_get_command() 里的注释 */
+        smp_rmb();
         SPICE_RING_CONS_ITEM(qxl, ring, cmd);
         if (!cmd) {
             return false;
@@ -811,6 +822,7 @@ static int interface_get_cursor_command(QXLInstance *sin, struct QXLCommandExt *
         ext->cmd      = *cmd;
         ext->group_id = MEMSLOT_GROUP_GUEST;
         ext->flags    = qxl->cmdflags;
+        smp_mb();
         SPICE_RING_POP(ring, notify);
         qxl_ring_set_dirty(qxl);
         if (notify) {

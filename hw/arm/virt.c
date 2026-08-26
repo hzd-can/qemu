@@ -2297,7 +2297,12 @@ static void machvirt_init(MachineState *machine)
         
         /* 在实例化之前设置属性 */
         qdev_prop_set_uint64(DEVICE(qxl_dev), "vram_size", 16 * 1024 * 1024);
-        qdev_prop_set_uint32(DEVICE(qxl_dev), "ram_size", 16 * 1024 * 1024);
+        /*
+         * ram_size(BAR0, 即 vga.vram) 必须大于 vgamem + QXLRam 头部，
+         * 否则 init_qxl_rom() 里 num_pages 计算会下溢回绕成 ~64K 页。
+         * 16MB vgamem 时取上游默认值 64MB。
+         */
+        qdev_prop_set_uint32(DEVICE(qxl_dev), "ram_size", 64 * 1024 * 1024);
         qdev_prop_set_uint32(DEVICE(qxl_dev), "vgamem_mb", 16);
 
         /* 最后手动实例化设备 */
