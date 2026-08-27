@@ -225,6 +225,85 @@ static hwaddr intel_hda_addr(uint32_t lbase, uint32_t ubase)
     return ((uint64_t)ubase << 32) | lbase;
 }
 
+#if defined(__aarch64__)
+/*
+ * 某些 ARM64 宿主平台（如 Phytium D2000）不保证
+ * "host 与 guest 以不同内存属性（WB vs NC/Device）访问同一页 guest RAM"
+ * 之间的一致性（ARM 规范中这本来就是 UNPREDICTABLE，鲲鹏 920 的
+ * 互联实现恰好兜住了）。Windows 的 hdaudbus 以非缓存属性映射
+ * CORB/RIRB/BDL 等 DMA 缓冲区，于是两个方向都会读到旧数据：
+ *
+ *   QEMU 写 -> guest 读（如 RIRB 应答）：QEMU 的 WB 写停留在 host
+ *     cache 里，guest 的 NC 读直达 DRAM，读到旧值。
+ *     -> 写完主动 clean 到 PoC（dc cvac）。
+ *   guest 写 -> QEMU 读（如 CORB 动词）：guest 的 NC 写直达 DRAM，
+ *     但 QEMU 的 WB 读命中的是之前缓存的旧行。
+ *     -> 读之前先 clean+invalidate（dc civac），强制从 DRAM 重新取。
+ *
+ * dc civac 会先写回脏行再失效，不会丢 host 数据；而这些区域 host
+ * 侧只有 QEMU 的模拟器在写，语义上是安全的。
+ */
+static uintptr_t intel_hda_dcache_line_size(void)
+{
+    static uintptr_t line_size;
+
+    if (unlikely(!line_size)) {
+        uint64_t ctr;
+
+        asm volatile("mrs %0, ctr_el0" : "=r"(ctr));
+        /* CTR_EL0.DminLine：log2(字数)，每字 4 字节 */
+        line_size = 4ULL << ((ctr >> 16) & 0xf);
+    }
+    return line_size;
+}
+
+static void intel_hda_dcache_op_poc(void *ptr, size_t len, bool invalidate)
+{
+    uintptr_t line = intel_hda_dcache_line_size();
+    uintptr_t start = (uintptr_t)ptr & ~(line - 1);
+    uintptr_t end = ((uintptr_t)ptr + len + line - 1) & ~(line - 1);
+    uintptr_t p;
+
+    for (p = start; p < end; p += line) {
+        if (invalidate) {
+            asm volatile("dc civac, %0" :: "r"(p) : "memory");
+        } else {
+            asm volatile("dc cvac, %0" :: "r"(p) : "memory");
+        }
+    }
+    asm volatile("dsb sy" ::: "memory");
+}
+
+/*
+ * 对 guest RAM 的 [addr, addr+len) 做 cache 维护：
+ * invalidate=false 用于 QEMU 写完之后（clean 到 PoC），
+ * invalidate=true 用于 QEMU 读之前（clean+invalidate，丢弃旧缓存行）。
+ */
+static void intel_hda_guest_cache_maint(PCIDevice *pci, hwaddr addr,
+                                        dma_addr_t len, MemTxAttrs attrs,
+                                        bool invalidate)
+{
+    AddressSpace *as = pci_device_iommu_address_space(pci);
+    DMADirection dir = invalidate ? DMA_DIRECTION_TO_DEVICE
+                                  : DMA_DIRECTION_FROM_DEVICE;
+    dma_addr_t plen = len;
+    void *p = dma_memory_map(as, addr, &plen, dir, attrs);
+
+    if (p) {
+        intel_hda_dcache_op_poc(p, plen, invalidate);
+        dma_memory_unmap(as, p, plen, dir, 0);
+    }
+}
+
+#define intel_hda_flush_guest_range(pci, addr, len, attrs) \
+    intel_hda_guest_cache_maint(pci, addr, len, attrs, false)
+#define intel_hda_invalidate_guest_range(pci, addr, len, attrs) \
+    intel_hda_guest_cache_maint(pci, addr, len, attrs, true)
+#else
+#define intel_hda_flush_guest_range(pci, addr, len, attrs)      do {} while (0)
+#define intel_hda_invalidate_guest_range(pci, addr, len, attrs) do {} while (0)
+#endif
+
 static void intel_hda_update_int_sts(IntelHDAState *d)
 {
     uint32_t sts = 0;
@@ -331,6 +410,9 @@ static void intel_hda_corb_run(IntelHDAState *d)
 
         rp = (d->corb_rp + 1) & 0xff;
         addr = intel_hda_addr(d->corb_lbase, d->corb_ubase);
+        /* CORB 由 guest 以非缓存属性写入：读前先失效 host cache 里的旧行 */
+        intel_hda_invalidate_guest_range(&d->pci, addr + 4 * rp, 4,
+                                         MEMTXATTRS_UNSPECIFIED);
         ldl_le_pci_dma(&d->pci, addr + 4 * rp, &verb, MEMTXATTRS_UNSPECIFIED);
         d->corb_rp = rp;
 
@@ -367,6 +449,8 @@ static void intel_hda_response(HDACodecDevice *dev, bool solicited, uint32_t res
     addr = intel_hda_addr(d->rirb_lbase, d->rirb_ubase);
     res |= stl_le_pci_dma(&d->pci, addr + 8 * wp, response, attrs);
     res |= stl_le_pci_dma(&d->pci, addr + 8 * wp + 4, ex, attrs);
+    /* 见 intel_hda_flush_guest_range：保证 guest 的非缓存读能看到应答 */
+    intel_hda_flush_guest_range(&d->pci, addr + 8 * wp, 8, attrs);
     if (res != MEMTX_OK && (d->rirb_ctl & ICH6_RBCTL_OVERRUN_EN)) {
         d->rirb_sts |= ICH6_RBSTS_OVERRUN;
         intel_hda_update_irq(d);
@@ -430,8 +514,24 @@ static bool intel_hda_xfer(HDACodecDevice *dev, uint32_t stnr, bool output,
         dprint(d, 3, "dma: entry %d, pos %d/%d, copy %d\n",
                st->be, st->bp, st->bpl[st->be].len, copy);
 
+        if (output) {
+            /*
+             * 播放：PCM 数据由 guest 写入。若 guest 用非缓存属性写，
+             * host cache 里可能有旧行，读前先失效（civac 会先 clean
+             * 再 invalidate，即使 guest 是 WB 写也不会丢数据）。
+             */
+            intel_hda_invalidate_guest_range(&d->pci,
+                                             st->bpl[st->be].addr + st->bp,
+                                             copy, attrs);
+        }
         pci_dma_rw(&d->pci, st->bpl[st->be].addr + st->bp, buf, copy, !output,
                    attrs);
+        if (!output) {
+            /* 录音：QEMU 刚写入的数据刷到 PoC，保证 guest 的非缓存读可见 */
+            intel_hda_flush_guest_range(&d->pci,
+                                        st->bpl[st->be].addr + st->bp,
+                                        copy, attrs);
+        }
         st->lpib += copy;
         st->bp += copy;
         buf += copy;
@@ -455,6 +555,8 @@ static bool intel_hda_xfer(HDACodecDevice *dev, uint32_t stnr, bool output,
         s = st - d->st;
         addr = intel_hda_addr(d->dp_lbase & ~0x01, d->dp_ubase);
         stl_le_pci_dma(&d->pci, addr + 8 * s, st->lpib, attrs);
+        /* 与 RIRB 同理：写完刷到 PoC，保证 guest 的非缓存读可见 */
+        intel_hda_flush_guest_range(&d->pci, addr + 8 * s, 4, attrs);
     }
     dprint(d, 3, "dma: --\n");
 
@@ -476,6 +578,9 @@ static void intel_hda_parse_bdl(IntelHDAState *d, IntelHDAStream *st)
     g_free(st->bpl);
     st->bpl = g_new(bpl, st->bentries);
     for (i = 0; i < st->bentries; i++, addr += 16) {
+        /* BDL 与 CORB 同理：guest 非缓存写入，读前先失效 host cache */
+        intel_hda_invalidate_guest_range(&d->pci, addr, 16,
+                                         MEMTXATTRS_UNSPECIFIED);
         pci_dma_read(&d->pci, addr, buf, 16);
         st->bpl[i].addr  = le64_to_cpu(*(uint64_t *)buf);
         st->bpl[i].len   = le32_to_cpu(*(uint32_t *)(buf + 8));
