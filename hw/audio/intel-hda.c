@@ -28,6 +28,7 @@
 #include "qemu/error-report.h"
 #include "hw/audio/soundhw.h"
 #include "intel-hda.h"
+#include "qemu/host-cache-maint.h"
 #include "migration/vmstate.h"
 #include "intel-hda-defs.h"
 #include "sysemu/dma.h"
@@ -229,50 +230,12 @@ static hwaddr intel_hda_addr(uint32_t lbase, uint32_t ubase)
 /*
  * 某些 ARM64 宿主平台（如 Phytium D2000）不保证
  * "host 与 guest 以不同内存属性（WB vs NC/Device）访问同一页 guest RAM"
- * 之间的一致性（ARM 规范中这本来就是 UNPREDICTABLE，鲲鹏 920 的
- * 互联实现恰好兜住了）。Windows 的 hdaudbus 以非缓存属性映射
- * CORB/RIRB/BDL 等 DMA 缓冲区，于是两个方向都会读到旧数据：
- *
- *   QEMU 写 -> guest 读（如 RIRB 应答）：QEMU 的 WB 写停留在 host
- *     cache 里，guest 的 NC 读直达 DRAM，读到旧值。
- *     -> 写完主动 clean 到 PoC（dc cvac）。
- *   guest 写 -> QEMU 读（如 CORB 动词）：guest 的 NC 写直达 DRAM，
- *     但 QEMU 的 WB 读命中的是之前缓存的旧行。
- *     -> 读之前先 clean+invalidate（dc civac），强制从 DRAM 重新取。
- *
- * dc civac 会先写回脏行再失效，不会丢 host 数据；而这些区域 host
- * 侧只有 QEMU 的模拟器在写，语义上是安全的。
+ * 之间的一致性（详见 qemu/host-cache-maint.h）。Windows 的 hdaudbus
+ * 以非缓存属性映射 CORB/RIRB/BDL 等 DMA 缓冲区，两个方向都会读到
+ * 旧数据，因此在 DMA 读写前后做显式 cache 维护：
+ *   QEMU 写 RIRB/位置回写之后 -> clean 到 PoC；
+ *   QEMU 读 CORB/BDL/PCM 之前 -> clean+invalidate，强制从 DRAM 取。
  */
-static uintptr_t intel_hda_dcache_line_size(void)
-{
-    static uintptr_t line_size;
-
-    if (unlikely(!line_size)) {
-        uint64_t ctr;
-
-        asm volatile("mrs %0, ctr_el0" : "=r"(ctr));
-        /* CTR_EL0.DminLine：log2(字数)，每字 4 字节 */
-        line_size = 4ULL << ((ctr >> 16) & 0xf);
-    }
-    return line_size;
-}
-
-static void intel_hda_dcache_op_poc(void *ptr, size_t len, bool invalidate)
-{
-    uintptr_t line = intel_hda_dcache_line_size();
-    uintptr_t start = (uintptr_t)ptr & ~(line - 1);
-    uintptr_t end = ((uintptr_t)ptr + len + line - 1) & ~(line - 1);
-    uintptr_t p;
-
-    for (p = start; p < end; p += line) {
-        if (invalidate) {
-            asm volatile("dc civac, %0" :: "r"(p) : "memory");
-        } else {
-            asm volatile("dc cvac, %0" :: "r"(p) : "memory");
-        }
-    }
-    asm volatile("dsb sy" ::: "memory");
-}
 
 /*
  * 对 guest RAM 的 [addr, addr+len) 做 cache 维护：
@@ -290,7 +253,7 @@ static void intel_hda_guest_cache_maint(PCIDevice *pci, hwaddr addr,
     void *p = dma_memory_map(as, addr, &plen, dir, attrs);
 
     if (p) {
-        intel_hda_dcache_op_poc(p, plen, invalidate);
+        qemu_host_dcache_maint_poc(p, plen, invalidate);
         dma_memory_unmap(as, p, plen, dir, 0);
     }
 }

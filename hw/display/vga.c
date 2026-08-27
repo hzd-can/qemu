@@ -24,6 +24,7 @@
 
 #include "qemu/osdep.h"
 #include "qemu/units.h"
+#include "qemu/host-cache-maint.h"
 #include "sysemu/reset.h"
 #include "qapi/error.h"
 #include "hw/core/cpu.h"
@@ -1516,6 +1517,16 @@ static void vga_draw_graphic(VGACommonState *s, int full_update)
         region_end = s->vbe_size;
         force_shadow = true;
     }
+
+    /*
+     * Windows 启动/安装阶段的画面由微软 Basic Display 驱动绘制，
+     * framebuffer 以 WC（ARM64 上退化为 NC）属性映射；D2000 等平台
+     * 不保证它与 host 侧 WB 读之间的一致性。读显存前对可见区域做
+     * clean+invalidate，强制从 DRAM 取 guest 最新写入的像素。
+     * 非 aarch64 宿主上为空操作。
+     */
+    qemu_host_dcache_invalidate_poc(s->vram_ptr + region_start,
+                                    region_end - region_start);
 
     /* bits 5-6: 0 = 16-color mode, 1 = 4-color mode, 2 = 256-color mode.  */
     shift_control = (s->gr[VGA_GFX_MODE] >> 5) & 3;
