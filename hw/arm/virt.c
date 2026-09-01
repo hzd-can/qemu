@@ -2296,7 +2296,7 @@ static void machvirt_init(MachineState *machine)
         qxl_dev = pci_new(-1, "qxl-vga");
         
         /* 在实例化之前设置属性 */
-        qdev_prop_set_uint64(DEVICE(qxl_dev), "vram_size", 16 * 1024 * 1024);
+        qdev_prop_set_uint64(DEVICE(qxl_dev), "vram_size", 64 * 1024 * 1024);
         /*
          * ram_size(BAR0, 即 vga.vram) 必须大于 vgamem + QXLRam 头部，
          * 否则 init_qxl_rom() 里 num_pages 计算会下溢回绕成 ~64K 页。
