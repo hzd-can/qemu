@@ -3395,6 +3395,28 @@ void ram_handle_zero(void *host, uint64_t size)
     }
 }
 
+/*
+ * Restore a zero page into shared named-file RAM without keeping a physical
+ * page allocated.  A zero page is semantically identical to a hole, so
+ * punching the hole avoids filling the entire shared file during
+ * snapshot-load.
+ *
+ * Returns 1 when the page is not eligible for hole punching, 0 on success,
+ * and a negative errno on failure.
+ */
+static int ram_discard_shared_zero_page(RAMBlock *block, ram_addr_t offset)
+{
+    if (!qemu_ram_is_shared(block) ||
+        !qemu_ram_is_named_file(block) ||
+        block->page_size != TARGET_PAGE_SIZE) {
+        return 1;
+    }
+
+    return ram_block_discard_range(block, offset, TARGET_PAGE_SIZE) == 0
+               ? 0
+               : -EIO;
+}
+
 static void colo_init_ram_state(void)
 {
     ram_state_init(&ram_state);
@@ -3891,6 +3913,7 @@ static int ram_load_precopy(QEMUFile *f)
     while (!ret && !(flags & RAM_SAVE_FLAG_EOS)) {
         ram_addr_t addr;
         void *host = NULL, *host_bak = NULL;
+        RAMBlock *block = NULL;
         uint8_t ch;
 
         /*
@@ -3919,8 +3942,7 @@ static int ram_load_precopy(QEMUFile *f)
 
         if (flags & (RAM_SAVE_FLAG_ZERO | RAM_SAVE_FLAG_PAGE |
                      RAM_SAVE_FLAG_COMPRESS_PAGE | RAM_SAVE_FLAG_XBZRLE)) {
-            RAMBlock *block = ram_block_from_stream(mis, f, flags,
-                                                    RAM_CHANNEL_PRECOPY);
+            block = ram_block_from_stream(mis, f, flags, RAM_CHANNEL_PRECOPY);
 
             host = host_from_ram_block_offset(block, addr);
             /*
@@ -3969,6 +3991,13 @@ static int ram_load_precopy(QEMUFile *f)
                 error_report("Found a zero page with value %d", ch);
                 ret = -EINVAL;
                 break;
+            }
+            if (!migration_incoming_colo_enabled()) {
+                ret = ram_discard_shared_zero_page(block, addr);
+                if (ret <= 0) {
+                    break;
+                }
+                ret = 0;
             }
             ram_handle_zero(host, TARGET_PAGE_SIZE);
             break;
