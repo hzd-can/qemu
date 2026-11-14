@@ -20,6 +20,7 @@
 #include "hw/qdev-properties.h"
 #include "hw/virtio/vhost-vsock.h"
 #include "monitor/monitor.h"
+#include "sysemu/reset.h"
 
 static void vhost_vsock_get_config(VirtIODevice *vdev, uint8_t *config)
 {
@@ -97,6 +98,61 @@ static void vhost_vsock_set_status(VirtIODevice *vdev, uint8_t status)
         }
 
         vhost_vsock_common_stop(vdev);
+    }
+}
+
+static void vhost_vsock_reset_handler(void *opaque)
+{
+    VirtIODevice *vdev = VIRTIO_DEVICE(opaque);
+    VHostVSockCommon *vvc = VHOST_VSOCK_COMMON(vdev);
+    VHostVSock *vsock = VHOST_VSOCK(vdev);
+    Error *local_err = NULL;
+    int vhostfd;
+
+    vhost_vsock_set_status(vdev, 0);
+
+    /*
+     * VHOST_VSOCK_SET_RUNNING(0) only stops the virtqueues.  The kernel
+     * deliberately preserves established AF_VSOCK connections for VM
+     * pause/resume and migration.  A machine reset, however, destroys the
+     * guest endpoint and those connections can never become live again.
+     *
+     * Closing the vhost fd invokes vhost_vsock_dev_release(), which resets
+     * all orphaned host-side connections.  Reopen and initialise the backend
+     * immediately so the new guest boot can start the device normally.
+     */
+    if (vsock->conf.vhostfd) {
+        error_report("vhost-vsock: guest reset cannot recycle externally "
+                     "provided vhostfd; stale host connections may remain");
+        return;
+    }
+
+    vhost_dev_cleanup(&vvc->vhost_dev);
+
+    vhostfd = open("/dev/vhost-vsock", O_RDWR);
+    if (vhostfd < 0) {
+        error_report("vhost-vsock: failed to reopen vhost device after "
+                     "guest reset: %s", strerror(errno));
+        return;
+    }
+    if (!g_unix_set_fd_nonblocking(vhostfd, true, NULL)) {
+        error_report("vhost-vsock: failed to set reopened fd nonblocking: %s",
+                     strerror(errno));
+        close(vhostfd);
+        return;
+    }
+
+    vvc->vhost_dev.nvqs = ARRAY_SIZE(vvc->vhost_vqs);
+    vvc->vhost_dev.vqs = vvc->vhost_vqs;
+    if (vhost_dev_init(&vvc->vhost_dev, (void *)(uintptr_t)vhostfd,
+                       VHOST_BACKEND_TYPE_KERNEL, 0, &local_err) < 0) {
+        error_report_err(local_err);
+        return;
+    }
+
+    if (vhost_vsock_set_guest_cid(vdev) < 0) {
+        error_report("vhost-vsock: failed to restore guest CID after reset");
+        vhost_dev_cleanup(&vvc->vhost_dev);
     }
 }
 
@@ -183,6 +239,7 @@ static void vhost_vsock_device_realize(DeviceState *dev, Error **errp)
         goto err_vhost_dev;
     }
 
+    qemu_register_reset_nosnapshotload(vhost_vsock_reset_handler, vdev);
     return;
 
 err_vhost_dev:
@@ -196,6 +253,8 @@ static void vhost_vsock_device_unrealize(DeviceState *dev)
 {
     VHostVSockCommon *vvc = VHOST_VSOCK_COMMON(dev);
     VirtIODevice *vdev = VIRTIO_DEVICE(dev);
+
+    qemu_unregister_reset(vhost_vsock_reset_handler, vdev);
 
     /* This will stop vhost backend if appropriate. */
     vhost_vsock_set_status(vdev, 0);
