@@ -2271,6 +2271,34 @@ bool vga_common_init(VGACommonState *s, Object *obj, Error **errp)
     return true;
 }
 
+void vga_common_uninit(VGACommonState *s)
+{
+    qemu_unregister_reset(vga_reset, s);
+
+    if (s->legacy_address_space && s->has_chain4_alias) {
+        memory_region_del_subregion(s->legacy_address_space, &s->chain4_alias);
+        object_unparent(OBJECT(&s->chain4_alias));
+        s->has_chain4_alias = false;
+    }
+
+    if (s->legacy_address_space && s->vga_io_memory) {
+        memory_region_del_subregion(s->legacy_address_space, s->vga_io_memory);
+        object_unparent(OBJECT(s->vga_io_memory));
+        g_free(s->vga_io_memory);
+        s->vga_io_memory = NULL;
+    }
+
+    portio_list_destroy(&s->vga_port_list);
+    portio_list_destroy(&s->vbe_port_list);
+
+    if (s->vram.owner) {
+        vmstate_unregister_ram(&s->vram,
+                               s->global_vmstate ? NULL : s->vram.dev);
+        object_unparent(OBJECT(&s->vram));
+        s->vram_ptr = NULL;
+    }
+}
+
 static const MemoryRegionPortio vga_portio_list[] = {
     { 0x04,  2, 1, .read = vga_ioport_read, .write = vga_ioport_write }, /* 3b4 */
     { 0x0a,  1, 1, .read = vga_ioport_read, .write = vga_ioport_write }, /* 3ba */
@@ -2334,6 +2362,7 @@ void vga_init(VGACommonState *s, Object *obj, MemoryRegion *address_space,
     s->legacy_address_space = address_space;
 
     vga_io_memory = vga_init_io(s, obj, &vga_ports, &vbe_ports);
+    s->vga_io_memory = vga_io_memory;
     memory_region_add_subregion_overlap(address_space,
                                         0x000a0000,
                                         vga_io_memory,

@@ -33,6 +33,8 @@ struct PCIQXLDevice {
     SimpleSpiceDisplay ssd;
     int                id;
     bool               have_vga;
+    bool               display_listener_registered;
+    bool               spice_interface_added;
     uint32_t           debug;
     uint32_t           guestdebug;
     uint32_t           cmdlog;
@@ -83,6 +85,7 @@ struct PCIQXLDevice {
 
     /* thread signaling */
     QEMUBH             *update_irq;
+    VMChangeStateEntry *vmstate_handler;
 
     /* ram pci bar */
     QXLRam             *ram;

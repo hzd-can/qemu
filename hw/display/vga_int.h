@@ -58,6 +58,7 @@ typedef void (* vga_update_retrace_info_fn)(struct VGACommonState *s);
 
 typedef struct VGACommonState {
     MemoryRegion *legacy_address_space;
+    MemoryRegion *vga_io_memory;
     uint8_t *vram_ptr;
     MemoryRegion vram;
     uint32_t vram_size;
@@ -157,6 +158,7 @@ static inline int c6_to_8(int v)
 }
 
 bool vga_common_init(VGACommonState *s, Object *obj, Error **errp);
+void vga_common_uninit(VGACommonState *s);
 void vga_init(VGACommonState *s, Object *obj, MemoryRegion *address_space,
               MemoryRegion *address_space_io, bool init_vga_ports);
 MemoryRegion *vga_init_io(VGACommonState *s, Object *obj,

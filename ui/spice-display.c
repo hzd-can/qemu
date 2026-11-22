@@ -365,6 +365,35 @@ void qemu_spice_display_init_common(SimpleSpiceDisplay *ssd)
     }
 }
 
+void qemu_spice_display_uninit_common(SimpleSpiceDisplay *ssd)
+{
+    SimpleSpiceUpdate *update;
+    SimpleSpiceUpdate *next;
+
+    QTAILQ_FOREACH_SAFE(update, &ssd->updates, next, next) {
+        QTAILQ_REMOVE(&ssd->updates, update, next);
+        qemu_spice_destroy_update(ssd, update);
+    }
+
+    g_clear_pointer(&ssd->ptr_define, g_free);
+    g_clear_pointer(&ssd->ptr_move, g_free);
+    if (ssd->cursor) {
+        cursor_unref(ssd->cursor);
+        ssd->cursor = NULL;
+    }
+    if (ssd->surface) {
+        pixman_image_unref(ssd->surface);
+        ssd->surface = NULL;
+    }
+    if (ssd->mirror) {
+        pixman_image_unref(ssd->mirror);
+        ssd->mirror = NULL;
+    }
+    g_clear_pointer(&ssd->buf, g_free);
+    ssd->bufsize = 0;
+    qemu_mutex_destroy(&ssd->lock);
+}
+
 /* display listener callbacks */
 
 void qemu_spice_display_update(SimpleSpiceDisplay *ssd,

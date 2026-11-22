@@ -890,6 +890,32 @@ int qemu_spice_add_display_interface(QXLInstance *qxlin, QemuConsole *con)
     return qemu_spice_add_interface(&qxlin->base);
 }
 
+void qemu_spice_remove_display_interface(QXLInstance *qxlin, QemuConsole *con)
+{
+    if (!g_slist_find(spice_consoles, con)) {
+        return;
+    }
+
+    if (spice_display_is_running) {
+        G_GNUC_BEGIN_IGNORE_DEPRECATIONS
+        spice_qxl_stop(qxlin);
+        G_GNUC_END_IGNORE_DEPRECATIONS
+    }
+    spice_consoles = g_slist_remove(spice_consoles, con);
+    if (spice_server) {
+        spice_server_remove_interface(&qxlin->base);
+    }
+}
+
+void qemu_spice_start_display_interface(QXLInstance *qxlin)
+{
+    if (spice_display_is_running) {
+        G_GNUC_BEGIN_IGNORE_DEPRECATIONS
+        spice_qxl_start(qxlin);
+        G_GNUC_END_IGNORE_DEPRECATIONS
+    }
+}
+
 static int qemu_spice_set_ticket(bool fail_if_conn, bool disconnect_if_conn)
 {
     time_t lifetime, now = time(NULL);

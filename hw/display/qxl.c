@@ -2245,7 +2245,8 @@ static void qxl_realize_common(PCIQXLDevice *qxl, Error **errp)
     }
 #endif
 
-    qemu_add_vm_change_state_handler(qxl_vm_change_state_handler, qxl);
+    qxl->vmstate_handler =
+        qemu_add_vm_change_state_handler(qxl_vm_change_state_handler, qxl);
 
     qxl->update_irq = qemu_bh_new_guarded(qxl_update_irq_bh, qxl,
                                           &DEVICE(qxl)->mem_reentrancy_guard);
@@ -2255,6 +2256,9 @@ static void qxl_realize_common(PCIQXLDevice *qxl, Error **errp)
                                               &DEVICE(qxl)->mem_reentrancy_guard);
     qxl->ssd.cursor_bh = qemu_bh_new_guarded(qemu_spice_cursor_refresh_bh, &qxl->ssd,
                                              &DEVICE(qxl)->mem_reentrancy_guard);
+
+    qxl->spice_interface_added = true;
+    qemu_spice_start_display_interface(&qxl->ssd.qxl);
 }
 
 static void qxl_realize_primary(PCIDevice *dev, Error **errp)
@@ -2296,6 +2300,7 @@ static void qxl_realize_primary(PCIDevice *dev, Error **errp)
     qxl->ssd.dcl.ops = &display_listener_ops;
     qxl->ssd.dcl.con = vga->con;
     register_displaychangelistener(&qxl->ssd.dcl);
+    qxl->display_listener_registered = true;
 }
 
 static void qxl_realize_secondary(PCIDevice *dev, Error **errp)
@@ -2521,6 +2526,57 @@ static Property qxl_properties[] = {
         DEFINE_PROP_END_OF_LIST(),
 };
 
+static void qxl_exit(PCIDevice *dev)
+{
+    PCIQXLDevice *qxl = PCI_QXL(dev);
+
+    if (qxl->display_listener_registered) {
+        unregister_displaychangelistener(&qxl->ssd.dcl);
+        qxl->display_listener_registered = false;
+    }
+
+    if (qxl->spice_interface_added) {
+        qemu_spice_remove_display_interface(&qxl->ssd.qxl, qxl->vga.con);
+        qxl->spice_interface_added = false;
+    }
+
+    qemu_spice_display_uninit_common(&qxl->ssd);
+
+    g_clear_pointer(&qxl->vmstate_handler, qemu_del_vm_change_state_handler);
+    g_clear_pointer(&qxl->update_irq, qemu_bh_delete);
+    g_clear_pointer(&qxl->update_area_bh, qemu_bh_delete);
+    g_clear_pointer(&qxl->ssd.cursor_bh, qemu_bh_delete);
+    g_clear_pointer(&qxl->guest_surfaces.cmds, g_free);
+
+    if (qxl->vga.con) {
+        graphic_console_close(qxl->vga.con);
+        qxl->vga.con = NULL;
+    }
+
+    if (qxl->have_vga) {
+        portio_list_destroy(&qxl->vga_port_list);
+        vga_common_uninit(&qxl->vga);
+    } else if (qxl->vga.vram.owner) {
+        object_unparent(OBJECT(&qxl->vga.vram));
+    }
+
+    if (qxl->vram32_bar.owner) {
+        object_unparent(OBJECT(&qxl->vram32_bar));
+    }
+    if (qxl->vram_bar.owner) {
+        object_unparent(OBJECT(&qxl->vram_bar));
+    }
+    if (qxl->io_bar.owner) {
+        object_unparent(OBJECT(&qxl->io_bar));
+    }
+    if (qxl->rom_bar.owner) {
+        object_unparent(OBJECT(&qxl->rom_bar));
+    }
+
+    qemu_mutex_destroy(&qxl->track_lock);
+    qemu_mutex_destroy(&qxl->async_lock);
+}
+
 static void qxl_pci_class_init(ObjectClass *klass, void *data)
 {
     DeviceClass *dc = DEVICE_CLASS(klass);
@@ -2528,6 +2584,7 @@ static void qxl_pci_class_init(ObjectClass *klass, void *data)
 
     k->vendor_id = REDHAT_PCI_VENDOR_ID;
     k->device_id = QXL_DEVICE_ID_STABLE;
+    k->exit = qxl_exit;
     set_bit(DEVICE_CATEGORY_DISPLAY, dc->categories);
     dc->reset = qxl_reset_handler;
     dc->vmsd = &qxl_vmstate;
