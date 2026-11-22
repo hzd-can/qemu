@@ -54,6 +54,7 @@
 #include "hw/usb/hcd-uhci.h"
 #include "qapi/error.h"
 #include "qemu/error-report.h"
+#include "monitor/qdev.h"
 #include "sysemu/numa.h"
 #include "hw/hyperv/vmbus-bridge.h"
 #include "hw/mem/nvdimm.h"
@@ -114,6 +115,30 @@ static int ehci_create_ich9_with_companions(PCIBus *bus, int slot)
         pci_realize_and_unref(uhci, bus, &error_fatal);
     }
     return 0;
+}
+
+static void pc_q35_create_default_display(PCIBus *host_bus)
+{
+    PCIDevice *root_port;
+    PCIDevice *qxl;
+    PCIBus *display_bus;
+
+    root_port = pci_new(-1, "pcie-root-port");
+    qdev_set_id(DEVICE(root_port), g_strdup("disp_hotplug"), &error_fatal);
+    qdev_prop_set_uint8(DEVICE(root_port), "chassis", 11);
+    qdev_prop_set_uint16(DEVICE(root_port), "slot", 11);
+    qdev_prop_set_bit(DEVICE(root_port), "hotplug", true);
+    qdev_prop_set_bit(DEVICE(root_port), "vga", true);
+    pci_realize_and_unref(root_port, host_bus, &error_fatal);
+
+    display_bus = pci_bridge_get_sec_bus(PCI_BRIDGE(root_port));
+
+    qxl = pci_new(-1, "miuwin-display");
+    qdev_set_id(DEVICE(qxl), g_strdup("display0"), &error_fatal);
+    qdev_prop_set_uint64(DEVICE(qxl), "vram_size", 16 * MiB);
+    qdev_prop_set_uint32(DEVICE(qxl), "ram_size", 16 * MiB);
+    qdev_prop_set_uint32(DEVICE(qxl), "vgamem_mb", 16);
+    pci_realize_and_unref(qxl, display_bus, &error_fatal);
 }
 
 /* PC hardware initialisation */
@@ -339,7 +364,7 @@ static void pc_q35_init(MachineState *machine)
     pc_cmos_init(pcms, idebus[0], idebus[1], rtc_state);
 
     /* the rest devices to which pci devfn is automatically assigned */
-    pc_vga_init(isa_bus, host_bus);
+    pc_q35_create_default_display(host_bus);
     pc_nic_init(pcmc, isa_bus, host_bus, pcms->xenbus);
 
     if (machine->nvdimms_state->is_enabled) {
