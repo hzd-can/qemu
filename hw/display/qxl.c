@@ -2125,6 +2125,7 @@ static void qxl_realize_common(PCIQXLDevice *qxl, Error **errp)
     qxl->num_memslots = NUM_MEMSLOTS;
     qemu_mutex_init(&qxl->track_lock);
     qemu_mutex_init(&qxl->async_lock);
+    qxl->mutexes_initialized = true;
     qxl->current_async = QXL_UNDEFINED_IO;
     qxl->guest_bug = 0;
 
@@ -2576,9 +2577,11 @@ static void qxl_instance_finalize(Object *obj)
     if (qxl->have_vga) {
         vga_common_finalize(&qxl->vga);
     }
-    qemu_mutex_destroy(&qxl->track_lock);
-    qemu_mutex_destroy(&qxl->async_lock);
-    qemu_mutex_destroy(&qxl->ssd.lock);
+    if (qxl->mutexes_initialized) {
+        qemu_mutex_destroy(&qxl->track_lock);
+        qemu_mutex_destroy(&qxl->async_lock);
+        qemu_mutex_destroy(&qxl->ssd.lock);
+    }
 }
 
 static void qxl_pci_class_init(ObjectClass *klass, void *data)

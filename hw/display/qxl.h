@@ -33,6 +33,7 @@ struct PCIQXLDevice {
     SimpleSpiceDisplay ssd;
     int                id;
     bool               have_vga;
+    bool               mutexes_initialized;
     bool               display_listener_registered;
     bool               spice_interface_added;
     uint32_t           debug;
