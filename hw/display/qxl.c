@@ -2623,6 +2623,23 @@ static const TypeInfo qxl_primary_info = {
 module_obj("qxl-vga");
 module_kconfig(QXL);
 
+static void qxl_hotplug_class_init(ObjectClass *klass, void *data)
+{
+    DeviceClass *dc = DEVICE_CLASS(klass);
+    PCIDeviceClass *k = PCI_DEVICE_CLASS(klass);
+
+    qxl_primary_class_init(klass, data);
+    k->class_id = PCI_CLASS_DISPLAY_OTHER;
+    dc->desc = "Spice QXL GPU (runtime hotplug, primary resources)";
+}
+
+static const TypeInfo qxl_hotplug_info = {
+    .name          = "qxl-hotplug",
+    .parent        = TYPE_PCI_QXL,
+    .class_init    = qxl_hotplug_class_init,
+};
+module_obj("qxl-hotplug");
+
 static void qxl_secondary_class_init(ObjectClass *klass, void *data)
 {
     DeviceClass *dc = DEVICE_CLASS(klass);
@@ -2644,6 +2661,7 @@ static void qxl_register_types(void)
 {
     type_register_static(&qxl_pci_type_info);
     type_register_static(&qxl_primary_info);
+    type_register_static(&qxl_hotplug_info);
     type_register_static(&qxl_secondary_info);
 }
 
