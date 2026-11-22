@@ -2559,11 +2559,21 @@ static void qxl_exit(PCIDevice *dev)
     } else if (qxl->vga.vram.owner) {
         object_unparent(OBJECT(&qxl->vga.vram));
     }
+
+    if (qxl->rom_bar.ram_block) {
+        vmstate_unregister_ram(&qxl->rom_bar, DEVICE(qxl));
+    }
+    if (qxl->vram_bar.ram_block) {
+        vmstate_unregister_ram(&qxl->vram_bar, DEVICE(qxl));
+    }
 }
 
 static void qxl_instance_finalize(Object *obj)
 {
     PCIQXLDevice *qxl = PCI_QXL(obj);
+    if (qxl->have_vga) {
+        vga_common_finalize(&qxl->vga);
+    }
     qemu_mutex_destroy(&qxl->track_lock);
     qemu_mutex_destroy(&qxl->async_lock);
     qemu_mutex_destroy(&qxl->ssd.lock);

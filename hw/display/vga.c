@@ -2277,15 +2277,11 @@ void vga_common_uninit(VGACommonState *s)
 
     if (s->legacy_address_space && s->has_chain4_alias) {
         memory_region_del_subregion(s->legacy_address_space, &s->chain4_alias);
-        object_unparent(OBJECT(&s->chain4_alias));
         s->has_chain4_alias = false;
     }
 
     if (s->legacy_address_space && s->vga_io_memory) {
         memory_region_del_subregion(s->legacy_address_space, s->vga_io_memory);
-        object_unparent(OBJECT(s->vga_io_memory));
-        g_free(s->vga_io_memory);
-        s->vga_io_memory = NULL;
     }
 
     portio_list_destroy(&s->vga_port_list);
@@ -2297,6 +2293,20 @@ void vga_common_uninit(VGACommonState *s)
     }
 
     s->vram_ptr = NULL;
+}
+
+void vga_common_finalize(VGACommonState *s)
+{
+    if (s->has_chain4_alias) {
+        object_unparent(OBJECT(&s->chain4_alias));
+        s->has_chain4_alias = false;
+    }
+
+    if (s->vga_io_memory) {
+        object_unparent(OBJECT(s->vga_io_memory));
+        g_free(s->vga_io_memory);
+        s->vga_io_memory = NULL;
+    }
 }
 
 static const MemoryRegionPortio vga_portio_list[] = {
