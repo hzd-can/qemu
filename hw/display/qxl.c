@@ -2555,7 +2555,7 @@ static void qxl_primary_class_init(ObjectClass *klass, void *data)
     k->romfile = "vgabios-qxl.bin";
     k->class_id = PCI_CLASS_DISPLAY_VGA;
     dc->desc = "Spice QXL GPU (primary, vga compatible)";
-    dc->hotpluggable = false;
+    dc->hotpluggable = true;
 }
 
 static const TypeInfo qxl_primary_info = {
