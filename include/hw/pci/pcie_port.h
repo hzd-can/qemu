@@ -62,6 +62,9 @@ struct PCIESlot {
     /* Disable ACS (really for a pcie_root_port) */
     bool        disable_acs;
 
+    /* Forward legacy VGA I/O and memory regions through this slot */
+    bool        vga_enable;
+
     /* Indicates whether any type of hot-plug is allowed on the slot */
     bool        hotplug;
 

@@ -166,6 +166,7 @@ static void pci_bridge_init_vga_aliases(PCIBridge *br, PCIBus *parent,
                                         MemoryRegion *alias_vga)
 {
     PCIDevice *pd = PCI_DEVICE(br);
+    PCIBridgeWindows *w = &br->windows;
     uint16_t brctl = pci_get_word(pd->config + PCI_BRIDGE_CONTROL);
 
     memory_region_init_alias(&alias_vga[QEMU_PCI_VGA_IO_LO], OBJECT(br),
@@ -177,11 +178,19 @@ static void pci_bridge_init_vga_aliases(PCIBridge *br, PCIBus *parent,
     memory_region_init_alias(&alias_vga[QEMU_PCI_VGA_MEM], OBJECT(br),
                              "pci_bridge_vga_mem", &br->address_space_mem,
                              QEMU_PCI_VGA_MEM_BASE, QEMU_PCI_VGA_MEM_SIZE);
+    memory_region_init_alias(&w->alias_vbe, OBJECT(br),
+                             "pci_bridge_vbe_io", &br->address_space_io,
+                             0x1ce, 4);
 
     if (brctl & PCI_BRIDGE_CTL_VGA) {
         pci_register_vga(pd, &alias_vga[QEMU_PCI_VGA_MEM],
                          &alias_vga[QEMU_PCI_VGA_IO_LO],
                          &alias_vga[QEMU_PCI_VGA_IO_HI]);
+        if (br->vbe_io_enable) {
+            memory_region_add_subregion_overlap(parent->address_space_io,
+                                                0x1ce, &w->alias_vbe, 1);
+            w->vbe_alias_mapped = true;
+        }
     }
 }
 
@@ -222,6 +231,10 @@ static void pci_bridge_region_del(PCIBridge *br, PCIBridgeWindows *w)
     memory_region_del_subregion(parent->address_space_io, &w->alias_io);
     memory_region_del_subregion(parent->address_space_mem, &w->alias_mem);
     memory_region_del_subregion(parent->address_space_mem, &w->alias_pref_mem);
+    if (w->vbe_alias_mapped) {
+        memory_region_del_subregion(parent->address_space_io, &w->alias_vbe);
+        w->vbe_alias_mapped = false;
+    }
     pci_unregister_vga(pd);
 }
 
@@ -230,6 +243,7 @@ static void pci_bridge_region_cleanup(PCIBridge *br, PCIBridgeWindows *w)
     object_unparent(OBJECT(&w->alias_io));
     object_unparent(OBJECT(&w->alias_mem));
     object_unparent(OBJECT(&w->alias_pref_mem));
+    object_unparent(OBJECT(&w->alias_vbe));
     object_unparent(OBJECT(&w->alias_vga[QEMU_PCI_VGA_IO_LO]));
     object_unparent(OBJECT(&w->alias_vga[QEMU_PCI_VGA_IO_HI]));
     object_unparent(OBJECT(&w->alias_vga[QEMU_PCI_VGA_MEM]));

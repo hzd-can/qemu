@@ -47,6 +47,7 @@ static void rp_reset_hold(Object *obj)
 {
     PCIDevice *d = PCI_DEVICE(obj);
     DeviceState *qdev = DEVICE(obj);
+    PCIESlot *s = PCIE_SLOT(obj);
 
     rp_aer_vector_update(d);
     pcie_cap_root_reset(d);
@@ -57,6 +58,12 @@ static void rp_reset_hold(Object *obj)
     pcie_aer_root_reset(d);
     pci_bridge_reset(qdev);
     pci_bridge_disable_base_limit(d);
+    PCI_BRIDGE(d)->vbe_io_enable = s->vga_enable;
+    if (s->vga_enable) {
+        pci_word_test_and_set_mask(d->config + PCI_BRIDGE_CONTROL,
+                                   PCI_BRIDGE_CTL_VGA);
+        pci_bridge_update_mappings(PCI_BRIDGE(d));
+    }
 }
 
 static void rp_realize(PCIDevice *d, Error **errp)
@@ -152,6 +159,7 @@ static Property rp_props[] = {
     DEFINE_PROP_BIT(COMPAT_PROP_PCP, PCIDevice, cap_present,
                     QEMU_PCIE_SLTCAP_PCP_BITNR, true),
     DEFINE_PROP_BOOL("disable-acs", PCIESlot, disable_acs, false),
+    DEFINE_PROP_BOOL("vga", PCIESlot, vga_enable, false),
     DEFINE_PROP_END_OF_LIST()
 };
 

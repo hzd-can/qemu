@@ -42,6 +42,7 @@ struct PCIBridgeWindows {
     MemoryRegion alias_pref_mem;
     MemoryRegion alias_mem;
     MemoryRegion alias_io;
+    MemoryRegion alias_vbe;
     /*
      * When bridge control VGA forwarding is enabled, bridges will
      * provide positive decode on the PCI VGA defined I/O port and
@@ -49,6 +50,7 @@ struct PCIBridgeWindows {
      * I/O and memory enable bits in the bridge command register.
      */
     MemoryRegion alias_vga[QEMU_PCI_VGA_NUM_REGIONS];
+    bool vbe_alias_mapped;
 };
 
 #define TYPE_PCI_BRIDGE "base-pci-bridge"
@@ -80,6 +82,7 @@ struct PCIBridge {
 
     /* SLT is RO for PCIE to PCIE bridges, but old QEMU versions had it RW */
     bool pcie_writeable_slt_bug;
+    bool vbe_io_enable;
 };
 
 #define PCI_BRIDGE_DEV_PROP_CHASSIS_NR "chassis_nr"
