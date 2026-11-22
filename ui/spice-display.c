@@ -391,7 +391,6 @@ void qemu_spice_display_uninit_common(SimpleSpiceDisplay *ssd)
     }
     g_clear_pointer(&ssd->buf, g_free);
     ssd->bufsize = 0;
-    qemu_mutex_destroy(&ssd->lock);
 }
 
 /* display listener callbacks */

@@ -2296,10 +2296,7 @@ void vga_common_uninit(VGACommonState *s)
                                s->global_vmstate ? NULL : s->vram.dev);
     }
 
-    if (s->vram.owner) {
-        object_unparent(OBJECT(&s->vram));
-        s->vram_ptr = NULL;
-    }
+    s->vram_ptr = NULL;
 }
 
 static const MemoryRegionPortio vga_portio_list[] = {

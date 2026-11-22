@@ -2559,22 +2559,14 @@ static void qxl_exit(PCIDevice *dev)
     } else if (qxl->vga.vram.owner) {
         object_unparent(OBJECT(&qxl->vga.vram));
     }
+}
 
-    if (qxl->vram32_bar.owner) {
-        object_unparent(OBJECT(&qxl->vram32_bar));
-    }
-    if (qxl->vram_bar.owner) {
-        object_unparent(OBJECT(&qxl->vram_bar));
-    }
-    if (qxl->io_bar.owner) {
-        object_unparent(OBJECT(&qxl->io_bar));
-    }
-    if (qxl->rom_bar.owner) {
-        object_unparent(OBJECT(&qxl->rom_bar));
-    }
-
+static void qxl_instance_finalize(Object *obj)
+{
+    PCIQXLDevice *qxl = PCI_QXL(obj);
     qemu_mutex_destroy(&qxl->track_lock);
     qemu_mutex_destroy(&qxl->async_lock);
+    qemu_mutex_destroy(&qxl->ssd.lock);
 }
 
 static void qxl_pci_class_init(ObjectClass *klass, void *data)
@@ -2597,6 +2589,7 @@ static const TypeInfo qxl_pci_type_info = {
     .instance_size = sizeof(PCIQXLDevice),
     .abstract = true,
     .class_init = qxl_pci_class_init,
+    .instance_finalize = qxl_instance_finalize,
     .interfaces = (InterfaceInfo[]) {
         { INTERFACE_CONVENTIONAL_PCI_DEVICE },
         { },
