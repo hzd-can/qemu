@@ -2291,9 +2291,12 @@ void vga_common_uninit(VGACommonState *s)
     portio_list_destroy(&s->vga_port_list);
     portio_list_destroy(&s->vbe_port_list);
 
-    if (s->vram.owner) {
+    if (s->vram.ram_block) {
         vmstate_unregister_ram(&s->vram,
                                s->global_vmstate ? NULL : s->vram.dev);
+    }
+
+    if (s->vram.owner) {
         object_unparent(OBJECT(&s->vram));
         s->vram_ptr = NULL;
     }
