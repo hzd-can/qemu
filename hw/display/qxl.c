@@ -2640,7 +2640,7 @@ static void miuwin_display_class_init(ObjectClass *klass, void *data)
 
 static const TypeInfo miuwin_display_info = {
     .name          = "miuwin-display",
-    .parent        = "qxl-hotplug",
+    .parent        = "qxl-vga",
     .class_init    = miuwin_display_class_init,
 };
 module_obj("miuwin-display");
@@ -2683,8 +2683,8 @@ static void qxl_register_types(void)
 {
     type_register_static(&qxl_pci_type_info);
     type_register_static(&qxl_primary_info);
-    type_register_static(&qxl_hotplug_info);
     type_register_static(&miuwin_display_info);
+    type_register_static(&qxl_hotplug_info);
     type_register_static(&qxl_secondary_info);
 }
 
