@@ -2342,6 +2342,14 @@ static int qxl_pre_load(void *opaque)
     PCIQXLDevice* d = opaque;
 
     trace_qxl_pre_load(d->id);
+    /*
+     * The firmware-visible boot display is qxl-vga while the runtime
+     * hotplug display is qxl-hotplug.  They differ only in PCI subclass.
+     * That byte is normally read-only, but a snapshot saved after hotplug
+     * must still be loadable into the boot device.  Permit VMState to
+     * restore the saved class; qxl_post_load() makes it read-only again.
+     */
+    d->pci.wmask[PCI_CLASS_DEVICE] = 0xff;
     qxl_hard_reset(d, 1);
     qxl_exit_vga_mode(d);
     return 0;
@@ -2420,6 +2428,7 @@ static int qxl_post_load(void *opaque, int version)
         qxl_set_mode(d, d->shadow_rom.mode, 1);
         break;
     }
+    d->pci.wmask[PCI_CLASS_DEVICE] = 0;
     return 0;
 }
 
