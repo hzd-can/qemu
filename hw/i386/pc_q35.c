@@ -133,7 +133,7 @@ static void pc_q35_create_default_display(PCIBus *host_bus)
 
     display_bus = pci_bridge_get_sec_bus(PCI_BRIDGE(root_port));
 
-    qxl = pci_new(-1, "miuwin-display");
+    qxl = pci_new(-1, "qxl-vga");
     qdev_set_id(DEVICE(qxl), g_strdup("display0"), &error_fatal);
     qdev_prop_set_uint64(DEVICE(qxl), "vram_size", 16 * MiB);
     qdev_prop_set_uint32(DEVICE(qxl), "ram_size", 16 * MiB);
